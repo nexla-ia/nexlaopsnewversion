@@ -1,0 +1,322 @@
+import { useState, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
+import { Plus, Trash2, Edit2, X, Loader2, Briefcase } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import Modal from './Modal';
+
+interface Department {
+  id: string;
+  company_id: string;
+  name: string;
+  description: string | null;
+  created_at: string;
+  is_reception?: boolean;
+  is_default?: boolean;
+}
+
+export default function DepartmentsManagement() {
+  const { company } = useAuth();
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; dept: Department | null }>({
+    isOpen: false,
+    dept: null,
+  });
+  const [deleting, setDeleting] = useState(false);
+
+  const [formData, setFormData] = useState({
+    name: '',
+    description: '',
+  });
+
+  useEffect(() => {
+    fetchDepartments();
+  }, [company?.id]);
+
+  /* =========================================================
+     Helpers
+  ========================================================= */
+  const isRecepcao = (dept?: Department | null) => {
+    if (!dept) return false;
+    return (
+      dept.is_default === true ||
+      dept.is_reception === true ||
+      String(dept.name).toLowerCase().startsWith('recep')
+    );
+  };
+
+  /* =========================================================
+     Load
+  ========================================================= */
+  const fetchDepartments = async () => {
+    if (!company?.id) return;
+
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('departments')
+        .select('*')
+        .eq('company_id', company.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setDepartments(data || []);
+    } catch (err) {
+      console.error('Erro ao carregar departamentos:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /* =========================================================
+     Submit
+  ========================================================= */
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!company?.id) return;
+
+    // 🔒 Bloqueio de segurança
+    if (editingId) {
+      const dept = departments.find(d => d.id === editingId);
+      if (isRecepcao(dept)) {
+        alert('❌ O departamento Recepção não pode ser editado.');
+        return;
+      }
+    }
+
+    setSaving(true);
+    try {
+      if (editingId) {
+        const { error } = await supabase
+          .from('departments')
+          .update({
+            name: formData.name,
+            description: formData.description,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', editingId);
+
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('departments')
+          .insert({
+            company_id: company.id,
+            name: formData.name,
+            description: formData.description,
+          });
+
+        if (error) throw error;
+      }
+
+      handleCancel();
+      fetchDepartments();
+    } catch (err) {
+      console.error('Erro ao salvar departamento:', err);
+      alert('Erro ao salvar departamento');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /* =========================================================
+     Actions
+  ========================================================= */
+  const handleEdit = (dept: Department) => {
+    if (isRecepcao(dept)) return;
+
+    setFormData({
+      name: dept.name,
+      description: dept.description || '',
+    });
+    setEditingId(dept.id);
+    setShowForm(true);
+  };
+
+  const handleDelete = (dept: Department) => {
+    if (isRecepcao(dept)) {
+      alert('❌ O departamento Recepção não pode ser removido.');
+      return;
+    }
+    setDeleteModal({ isOpen: true, dept });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteModal.dept) return;
+
+    setDeleting(true);
+    try {
+      const { error } = await supabase
+        .from('departments')
+        .delete()
+        .eq('id', deleteModal.dept.id);
+
+      if (error) {
+        if (error.message.includes('departamento padrão') || error.message.includes('Recepção')) {
+          alert('❌ O departamento Recepção não pode ser removido. É o departamento padrão da empresa.');
+        } else {
+          throw error;
+        }
+        return;
+      }
+      setDeleteModal({ isOpen: false, dept: null });
+      fetchDepartments();
+    } catch (err: any) {
+      console.error('Erro ao excluir departamento:', err);
+      alert(`Erro ao excluir departamento: ${err?.message || 'Erro desconhecido'}`);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setFormData({ name: '', description: '' });
+    setShowForm(false);
+    setEditingId(null);
+  };
+
+  /* =========================================================
+     UI
+  ========================================================= */
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 text-teal-500 animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 animate-in fade-in duration-300">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Departamentos</h2>
+          <p className="text-sm text-gray-500 dark:text-slate-300 mt-1">
+            Gerencie os departamentos da sua empresa
+          </p>
+        </div>
+
+        {!showForm && (
+          <button
+            onClick={() => setShowForm(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-xl hover:scale-105 transition-all shadow-md"
+          >
+            <Plus className="w-5 h-5" />
+            Novo Departamento
+          </button>
+        )}
+      </div>
+
+      {/* FORM */}
+      {showForm && (
+        <div className="bg-white/70 dark:bg-slate-900 border dark:border-slate-600 rounded-2xl p-6 mb-6 shadow-md">
+          <div className="flex justify-between mb-4">
+            <h3 className="font-semibold dark:text-white">
+              {editingId ? 'Editar Departamento' : 'Novo Departamento'}
+            </h3>
+            <button onClick={handleCancel} className="dark:text-slate-300">
+              <X />
+            </button>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <input
+              required
+              value={formData.name}
+              onChange={e => setFormData({ ...formData, name: e.target.value })}
+              placeholder="Nome do departamento"
+              className="w-full px-4 py-2 border dark:border-slate-600 rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-400"
+            />
+
+            <textarea
+              value={formData.description}
+              onChange={e =>
+                setFormData({ ...formData, description: e.target.value })
+              }
+              placeholder="Descrição"
+              rows={3}
+              className="w-full px-4 py-2 border dark:border-slate-600 rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-400"
+            />
+
+            <div className="flex gap-3">
+              <button
+                type="submit"
+                disabled={saving}
+                className="flex-1 bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white py-2 rounded-xl disabled:opacity-50 transition-all font-medium"
+              >
+                {saving ? 'Salvando...' : editingId ? 'Atualizar' : 'Criar'}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="px-4 py-2 bg-gray-100 dark:bg-[#334155] dark:text-white rounded-xl"
+              >
+                Cancelar
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* LIST */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {departments.map((dept) => {
+          const recepcao = isRecepcao(dept);
+
+          return (
+            <div
+              key={dept.id}
+              className="bg-white/70 dark:bg-slate-900 backdrop-blur-xl border border-gray-200/50 dark:border-slate-600 rounded-2xl p-6 shadow-md hover:shadow-lg transition-all group hover:-translate-y-1"
+            >
+              <div className="flex justify-between mb-3">
+                <div className="w-14 h-14 bg-gradient-to-br from-blue-400 to-blue-600 rounded-xl flex items-center justify-center shadow-md">
+                  <Briefcase className="text-white w-6 h-6" />
+                </div>
+
+                {!recepcao && (
+                  <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => handleEdit(dept)} className="p-2 text-gray-400 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/20 rounded-lg transition-all">
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => handleDelete(dept)} className="p-2 text-gray-400 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/20 rounded-lg transition-all">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <h3 className="font-bold text-gray-900 dark:text-white">{dept.name}</h3>
+
+              {dept.description && (
+                <p className="text-sm text-gray-600 dark:text-slate-300 mt-1">
+                  {dept.description}
+                </p>
+              )}
+
+              <p className="text-xs text-gray-400 dark:text-slate-400 mt-4">
+                Criado em{' '}
+                {new Date(dept.created_at).toLocaleDateString('pt-BR')}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+
+      <Modal
+        isOpen={deleteModal.isOpen}
+        onClose={() => setDeleteModal({ isOpen: false, dept: null })}
+        onConfirm={confirmDelete}
+        title="Excluir Departamento"
+        message={`Tem certeza que deseja excluir o departamento "${deleteModal.dept?.name}"?\n\nEsta ação não pode ser desfeita.`}
+        confirmText="Excluir"
+        cancelText="Cancelar"
+        confirmColor="red"
+        loading={deleting}
+      />
+    </div>
+  );
+}
